@@ -20,7 +20,7 @@ RUN python3.11 -m pip install --upgrade pip && \
     rm /requirements.txt
 
 COPY bin/ffmpeg /ffmpeg
-COPY assets /assets
+COPY bin/assets /assets
 
 # NOTE: The base image comes with multiple Python versions pre-installed.
 #       It is reccommended to specify the version of Python when running your code.

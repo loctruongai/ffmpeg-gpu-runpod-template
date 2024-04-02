@@ -15,25 +15,21 @@ s3 = boto3.client(
 )
 
 
+def get_bucket_key(uri):
+    uri = uri.replace("gs://", "").replace("s3://", "")
+    bucket, key = uri.split("/", maxsplit=1)
+    filename = os.path.basename(key)
+    return bucket, key, filename
+
+
 def encode_video(
     input_video: str,
     input_audio: str,
     subtitles: str,
     output_video: str,
-    watermark_enabled: bool = True,
     subtitles_enabled: bool = True,
-    show_deepsync_logo: bool = True,
-    show_translation_notice: bool = True,
     matroska: bool = False,
 ):
-    watermark_deepsync_dub = os.path.join("assets", "watermark-final.png")
-    watermark_deepsync_dub_position = "main_w-overlay_w-5:main_h-overlay_h-5"
-    watermark_deepsync_dub_scale = "iw*0.4:-1"
-
-    watermark_warning = os.path.join("assets", "note.png")
-    watermark_warning_position = "5:main_h-overlay_h-5"
-    watermark_warning_scale = "iw*0.6:-1"
-
     cmd = ["/ffmpeg"]
     cmd += ["-hwaccel", "cuvid"]
     cmd += ["-hwaccel_output_format", "cuda"]
@@ -41,41 +37,13 @@ def encode_video(
     cmd += ["-i", shlex.quote(input_audio)]
     fc = []
 
-    if watermark_enabled:
-        if show_deepsync_logo:
-            cmd += ["-i", shlex.quote(watermark_deepsync_dub)]
-        if show_translation_notice:
-            cmd += ["-i", shlex.quote(watermark_warning)]
-        cmd += ["-filter_complex"]
-        if show_deepsync_logo and show_translation_notice:
-            fc += [f"[2:v]scale={watermark_deepsync_dub_scale}[wm1];"]
-            fc += [f"[3:v]scale={watermark_warning_scale}[wm2];"]
-            fc += [f"[0:v][wm1]overlay={watermark_deepsync_dub_position}[v];"]
-            fc += [f"[v][wm2]overlay={watermark_warning_position}[v];"]
-        else:
-            current_scale = (
-                watermark_deepsync_dub_scale
-                if show_deepsync_logo
-                else watermark_warning_scale
-            )
-            current_position = (
-                watermark_deepsync_dub_position
-                if show_deepsync_logo
-                else watermark_warning_position
-            )
-            fc += [f"[2:v]scale={current_scale}[wm1];"]
-            fc += [f"[0:v][wm1]overlay={current_position}[v];"]
-        if not subtitles_enabled:
-            fc[-1] = fc[-1].rstrip(";")
-
     if subtitles_enabled:
-        if not watermark_enabled:
-            cmd += ["-filter_complex"]
+        cmd += ["-filter_complex"]
         fc += [
-            f'[{"0:" if not watermark_enabled else ""}v]ass={subtitles}:fontsdir=/assets/[v]'
+            f'[0:v]ass={subtitles}:fontsdir=/assets/[v]'
         ]
 
-    if watermark_enabled or subtitles_enabled:
+    if subtitles_enabled:
         fc = shlex.quote(" ".join(fc))
         cmd += [fc]
         cmd += ["-map", '"[v]"']
@@ -102,13 +70,30 @@ def encode_video(
             input_audio,
             subtitles,
             output_video,
-            watermark_enabled,
             subtitles_enabled,
-            show_deepsync_logo,
-            show_translation_notice,
             matroska=True,
         )
 
+
+def downsample_video(
+    input_video: str,
+    output_video: str,
+    resolution=240
+):
+    ratio = f"{int(resolution*16/9)}:{resolution}"
+    cmd = ["/ffmpeg"]
+    cmd += ["-hwaccel", "cuvid"]
+    cmd += ["-hwaccel_output_format", "cuda"]
+    cmd += ["-i", shlex.quote(input_video)]
+    cmd += ["-vcodec", "h264_nvenc"]
+    cmd += ["-vf", f'scale="{ratio}"']
+    cmd += ["-crf", "28"]
+    cmd += [shlex.quote(output_video)]
+
+    cmd = " ".join(cmd)
+    print("Complete command:")
+    print(cmd)
+    result = subprocess.run(cmd, shell=True)
 
 
 def handler(job):
@@ -119,19 +104,20 @@ def handler(job):
     if task == "ENCODING":
         _id = event.get("id")
         language = event.get("language")
-        watermark_enabled = event.get("watermark") != "false"
-        subtitles_enabled = event.get("subtitles") != "false"
-        show_deepsync_logo = event.get("deepsync_logo") != "false"
-        show_translation_notice = event.get("translation_notice") != "false"
+        subtitles_enabled = event.get("subtitles", False)
         name = event.get("name", "exported_video.mp4")
         input_video_name = event.get("input_video_name", "video.mp4")
+        bucket = event.get("bucket")
+        bucket_parent_folder = event.get("bucket_parent_folder")
 
-        bucket = os.environ.get('BUCKET_NAME')
-        video_key = f"{os.environ.get('BUCKET_PARENT_FOLDER')}/{_id}/{input_video_name}"
-        audio_key = f"{os.environ.get('BUCKET_PARENT_FOLDER')}/{_id}/exported_with_music.wav"
-        subtitles_key = f"{os.environ.get('BUCKET_PARENT_FOLDER')}/{_id}/subtitles_{language}.ass"
+        assert bucket is not None
+        assert bucket_parent_folder is not None
 
-        exported_video_key = f"{os.environ.get('BUCKET_PARENT_FOLDER')}/{_id}/{name}"
+        video_key = f"{bucket_parent_folder}/{_id}/{input_video_name}"
+        audio_key = f"{bucket_parent_folder}/{_id}/exported_with_music.wav"
+        subtitles_key = f"{bucket_parent_folder}/{_id}/subtitles_{language}.ass"
+
+        exported_video_key = f"{bucket_parent_folder}/{_id}/{name}"
 
         with tempfile.TemporaryDirectory() as tmpdirname:
             input_video = os.path.join(tmpdirname, "video.mp4")
@@ -151,10 +137,7 @@ def handler(job):
                 input_audio,
                 subtitle_file,
                 output_video,
-                watermark_enabled,
                 subtitles_enabled,
-                show_deepsync_logo,
-                show_translation_notice,
             )
 
             if not os.path.exists(output_video):
@@ -167,6 +150,37 @@ def handler(job):
                 'statusCode': 200,
                 'body': 'Video re-encoding and upload completed!'
             }
+    elif task == "DOWNSAMPLING":
+        original_video_uri = event.get("original_video_uri")
+        output_video_uri = event.get("output_video_uri")
+        resolution = int(str(event.get("resolution", "240")).strip("p"))
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            original_video = os.path.join(tmpdirname, "video.mp4")
+            output_video = os.path.join(tmpdirname, "output.mp4")
+
+            print(original_video_uri, output_video_uri, resolution)
+            bucket, key, _ = get_bucket_key(original_video_uri)
+            s3.download_file(Bucket=bucket, Key=key, Filename=original_video)
+
+            # Encode audio, video and subtitles
+            downsample_video(
+                input_video,
+                output_video,
+                resolution=resolution
+            )
+            if not os.path.exists(output_video):
+                raise Exception("Video was unable to encode.")
+
+            # Upload the resultant video to the destination S3 bucket
+            bucket, exported_video_key, _ = get_bucket_key(output_video_uri)
+            s3.upload_file(Filename=output_video, Bucket=bucket, Key=exported_video_key)
+            return {
+                '_id': _id,
+                'statusCode': 200,
+                'body': 'Video downsampling successful!'
+            }
+    
 
 
 
