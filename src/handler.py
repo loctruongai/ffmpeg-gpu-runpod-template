@@ -2,8 +2,9 @@
 
 import os
 import boto3
-import tempfile
+import shlex
 import runpod
+import tempfile
 import subprocess
 
 s3 = boto3.client(
