@@ -84,9 +84,11 @@ def downsample_video(
     ratio = f"{int(resolution*16/9)}:{resolution}"
     cmd = ["/ffmpeg"]
     cmd += ["-hwaccel", "cuvid"]
+    cmd += ["-hwaccel_output_format", "cuda"]
     cmd += ["-i", shlex.quote(input_video)]
     cmd += ["-vcodec", "h264_nvenc"]
     cmd += ["-vf", f'scale_cuda="{ratio}"']
+    cmd += ["-cq", "28"]
     cmd += ["-an"]
     cmd += [shlex.quote(output_video)]
 
