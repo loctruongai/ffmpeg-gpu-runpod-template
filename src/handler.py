@@ -84,11 +84,10 @@ def downsample_video(
     ratio = f"{int(resolution*16/9)}:{resolution}"
     cmd = ["/ffmpeg"]
     cmd += ["-hwaccel", "cuvid"]
-    cmd += ["-hwaccel_output_format", "cuda"]
     cmd += ["-i", shlex.quote(input_video)]
     cmd += ["-vcodec", "h264_nvenc"]
-    cmd += ["-vf", f'scale="{ratio}"']
-    cmd += ["-crf", "28"]
+    cmd += ["-vf", f'scale_cuda="{ratio}"']
+    cmd += ["-an"]
     cmd += [shlex.quote(output_video)]
 
     cmd = " ".join(cmd)
@@ -97,8 +96,10 @@ def downsample_video(
     result = subprocess.run(cmd, shell=True)
 
 
-def handler(job):
+def handler(job_main):
     """ Handler function that will be used to process jobs. """
+    job = job_main["input"]
+    print(job)
     task = job['task']
     event = job['parameters']
 
@@ -166,7 +167,7 @@ def handler(job):
 
             # Encode audio, video and subtitles
             downsample_video(
-                input_video,
+                original_video,
                 output_video,
                 resolution=resolution
             )
@@ -177,7 +178,6 @@ def handler(job):
             bucket, exported_video_key, _ = get_bucket_key(output_video_uri)
             s3.upload_file(Filename=output_video, Bucket=bucket, Key=exported_video_key)
             return {
-                '_id': _id,
                 'statusCode': 200,
                 'body': 'Video downsampling successful!'
             }
