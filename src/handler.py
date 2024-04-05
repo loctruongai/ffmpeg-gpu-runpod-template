@@ -88,8 +88,7 @@ def downsample_video(
     cmd += ["-i", shlex.quote(input_video)]
     cmd += ["-vcodec", "h264_nvenc"]
     cmd += ["-vf", f'scale_cuda="{ratio}"']
-    cmd += ["-cq", "28"]
-    cmd += ["-an"]
+    cmd += ["-cq", "26"]
     cmd += [shlex.quote(output_video)]
 
     cmd = " ".join(cmd)
