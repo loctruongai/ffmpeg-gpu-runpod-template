@@ -32,28 +32,25 @@ def encode_video(
     matroska: bool = False,
 ):
     cmd = ["/ffmpeg"]
-    cmd += ["-hwaccel", "cuvid"]
+
+    if not subtitles_enabled:
+        cmd += ["-hwaccel", "nvdec"]
+    
     cmd += ["-hwaccel_output_format", "cuda"]
     cmd += ["-i", shlex.quote(input_video)]
     cmd += ["-i", shlex.quote(input_audio)]
     fc = []
 
     if subtitles_enabled:
-        cmd += ["-filter_complex"]
-        fc += [
-            f'[0:v]ass={subtitles}:fontsdir=/assets/[v]'
+        cmd += ["-vf"]
+        cmd += [
+            f'ass={subtitles}:fontsdir=/assets,hwupload_cuda'
         ]
-
-    if subtitles_enabled:
-        fc = shlex.quote(" ".join(fc))
-        cmd += [fc]
-        cmd += ["-map", '"[v]"']
-    else:
-        cmd += ["-map", "0:v"]
-
+    
     if matroska:
         cmd += ["-f", "matroska"]
 
+    cmd += ["-map", "0:v"]
     cmd += ["-map", "1:a"]
     cmd += ["-c:v", "h264_nvenc"]
     cmd += ["-c:a", "aac"]
